@@ -45,7 +45,7 @@
     <script type="text/babel">
         const { useState, useEffect } = React;
 
-        // --- Icons (Inline SVGs) ---
+        // --- Icons ---
         const Icon = ({ path, className }) => (
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
                 {path}
@@ -80,16 +80,27 @@
             const [copiedIndex, setCopiedIndex] = useState(null);
             const [toastMessage, setToastMessage] = useState(null);
             
+            // API Key & Model State
             const [apiKey, setApiKey] = useState('');
+            // [분석 결과 반영] 체크리스트 파일과 동일한 모델을 기본값으로 설정
+            const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-preview-09-2025'); 
             const [showSettings, setShowSettings] = useState(false);
             const [error, setError] = useState(null);
             const [testStatus, setTestStatus] = useState('idle');
 
+            // 사용 가능한 모델 목록 (업데이트됨)
+            const availableModels = [
+                { id: 'gemini-2.5-flash-preview-09-2025', name: 'Gemini 2.5 Flash Preview (체크리스트와 동일/추천)' },
+                { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (일반)' },
+                { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (고성능)' },
+                { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (실험적)' }
+            ];
+
             useEffect(() => {
                 const storedKey = localStorage.getItem('gemini_api_key');
-                if (storedKey) {
-                    setApiKey(storedKey);
-                }
+                const storedModel = localStorage.getItem('gemini_model');
+                if (storedKey) setApiKey(storedKey);
+                if (storedModel) setSelectedModel(storedModel);
             }, []);
 
             const handleSaveApiKey = () => {
@@ -98,54 +109,13 @@
                     return;
                 }
                 localStorage.setItem('gemini_api_key', apiKey.trim());
+                localStorage.setItem('gemini_model', selectedModel);
                 setShowSettings(false);
-                setToastMessage("API Key가 브라우저에 저장되었습니다.");
+                setToastMessage("설정이 저장되었습니다.");
                 setTimeout(() => setToastMessage(null), 3000);
             };
 
-            // 모델 자동 검색 및 최적 모델 반환 함수
-            const getBestModel = async (key) => {
-                try {
-                    // 1. 사용 가능한 모델 목록 조회
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
-                    if (!response.ok) throw new Error('모델 목록 조회 실패');
-                    
-                    const data = await response.json();
-                    const models = data.models || [];
-                    
-                    // 2. generateContent를 지원하는 모델만 필터링
-                    const capableModels = models.filter(m => 
-                        m.supportedGenerationMethods && 
-                        m.supportedGenerationMethods.includes('generateContent')
-                    );
-
-                    // 3. 우선순위대로 모델 찾기
-                    const priorities = [
-                        'gemini-2.0-flash', 
-                        'gemini-1.5-pro', 
-                        'gemini-1.5-flash', 
-                        'gemini-1.0-pro'
-                    ];
-
-                    for (const priority of priorities) {
-                        const found = capableModels.find(m => m.name.includes(priority));
-                        // API는 'models/gemini-pro' 형태를 반환하지만, 호출 시에는 'gemini-pro'만 쓰는 것이 안전할 때가 많음
-                        // 하지만 v1beta 엔드포인트는 models/{model} 형태를 원하므로, 목록에서 받은 이름을 그대로 사용하되
-                        // URL 구축 시 중복되지 않게 처리해야 함.
-                        if (found) return found.name.replace('models/', '');
-                    }
-
-                    // 4. 우선순위 모델이 없으면 목록의 첫 번째 사용
-                    if (capableModels.length > 0) {
-                        return capableModels[0].name.replace('models/', '');
-                    }
-                } catch (e) {
-                    console.warn("모델 자동 검색 실패, 기본값 사용", e);
-                }
-                // 최후의 보루 (기본값)
-                return 'gemini-1.5-flash';
-            };
-
+            // 연결 테스트 (체크리스트 파일과 동일한 로직 적용)
             const handleTestApiKey = async () => {
                 if (!apiKey.trim()) {
                     setTestStatus('error');
@@ -155,9 +125,8 @@
                 
                 setTestStatus('testing');
                 try {
-                    const modelName = await getBestModel(apiKey.trim());
-                    // 간단한 테스트 요청
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.trim()}`, {
+                    // 간단한 테스트용 페이로드
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey.trim()}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: [{ parts: [{ text: "Hello" }] }] })
@@ -165,10 +134,10 @@
 
                     if (response.ok) {
                         setTestStatus('success');
-                        setToastMessage(`연결 성공! (${modelName})`);
+                        setToastMessage(`연결 성공! (${selectedModel})`);
                     } else {
                         const errData = await response.json().catch(() => ({}));
-                        throw new Error(errData.error?.message || response.statusText);
+                        throw new Error(errData.error?.message || `HTTP ${response.status}`);
                     }
                 } catch (e) {
                     console.error(e);
@@ -177,11 +146,8 @@
                 }
             };
 
+            // Gemini API 호출 함수 (체크리스트의 재시도 로직 적용)
             const callGeminiAPI = async (targetUrl, topic) => {
-                // 동적으로 최적의 모델 찾기
-                const modelName = await getBestModel(apiKey.trim());
-                console.log("Selected Model:", modelName);
-
                 const contentContext = topic 
                 ? `Content Topic/Description: "${topic}"` 
                 : `Content URL: "${targetUrl}" (User provided only URL. If you can't access the specific video, analyze the typical viral pattern for this platform and generate a plan for a "Trending Viral Hit" in Korea, assuming a popular category like Vlog, Cafe, or Humor.)`;
@@ -230,39 +196,53 @@
                 }
                 `;
 
-                try {
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey.trim()}`, {
-                        method: 'POST',
-                        headers: {
-                        'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                        contents: [{
-                            parts: [{ text: prompt }]
-                        }]
-                        })
-                    });
+                // [분석 결과 반영] 체크리스트 파일에 있는 딜레이 로직 (1초, 2초, 4초 재시도)
+                const delays = [1000, 2000, 4000];
+                let lastError = null;
 
-                    if (!response.ok) {
-                        const errorData = await response.json().catch(() => ({}));
-                        const errorMessage = errorData.error?.message || 'API 호출 실패';
-                        throw new Error(`Google API 오류 (${response.status}): ${errorMessage}`);
+                for (let i = 0; i <= delays.length; i++) {
+                    try {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey.trim()}`, {
+                            method: 'POST',
+                            headers: {
+                            'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                            contents: [{
+                                parts: [{ text: prompt }]
+                            }]
+                            })
+                        });
+
+                        if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({}));
+                            const errorMessage = errorData.error?.message || `오류 코드: ${response.status}`;
+                            throw new Error(`AI 호출 실패 (${selectedModel}): ${errorMessage}`);
+                        }
+
+                        const data = await response.json();
+                        const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                        
+                        if (!textResponse) {
+                            throw new Error("AI 응답이 비어있습니다.");
+                        }
+
+                        const cleanJson = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+                        return JSON.parse(cleanJson);
+
+                    } catch (err) {
+                        console.warn(`Attempt ${i + 1} failed:`, err);
+                        lastError = err;
+                        
+                        // 마지막 시도였다면 에러 던지기
+                        if (i === delays.length) break;
+                        
+                        // 재시도 대기 (Delay)
+                        await new Promise(resolve => setTimeout(resolve, delays[i]));
                     }
-
-                    const data = await response.json();
-                    const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
-                    
-                    if (!textResponse) {
-                        throw new Error("AI가 빈 응답을 보냈습니다.");
-                    }
-
-                    const cleanJson = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-                    return JSON.parse(cleanJson);
-
-                } catch (err) {
-                    console.error("API Error:", err);
-                    throw err;
                 }
+                
+                throw lastError || new Error("모든 재시도 실패. 네트워크 상태나 API 키를 확인해주세요.");
             };
 
             const generateContent = async () => {
@@ -469,29 +449,41 @@
 
                     {showSettings && (
                         <div className="border-b border-gray-200 bg-white p-6 animate-in shadow-inner">
-                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start md:items-center gap-4">
-                            <div className="flex-1 w-full">
-                            <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Google Gemini API Key</label>
-                            <input 
-                                type="password" 
-                                value={apiKey}
-                                onChange={(e) => setApiKey(e.target.value)}
-                                placeholder="Enter your AI Studio API Key (Start with AIza...)"
-                                className="w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition text-gray-900 placeholder-gray-400"
-                            />
-                            <p className="text-xs text-gray-500 mt-2 flex items-center">
-                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5"></span>
-                                API Key가 있으면 실제 AI가 분석/생성을 수행합니다.
-                                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-amber-600 font-semibold hover:underline ml-2">
-                                키 발급받기 &rarr;
-                                </a>
-                            </p>
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-start gap-4">
+                            <div className="flex-1 w-full space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">Google Gemini API Key</label>
+                                    <input 
+                                        type="password" 
+                                        value={apiKey}
+                                        onChange={(e) => setApiKey(e.target.value)}
+                                        placeholder="Enter your AI Studio API Key (Start with AIza...)"
+                                        className="w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-yellow-500 focus:border-transparent outline-none transition text-gray-900 placeholder-gray-400"
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-2">사용할 AI 모델 선택</label>
+                                    <select 
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                        className="w-full bg-gray-50 border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-yellow-500 outline-none text-gray-900 cursor-pointer"
+                                    >
+                                        {availableModels.map(model => (
+                                            <option key={model.id} value={model.id}>{model.name}</option>
+                                        ))}
+                                    </select>
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        * 체크리스트 파일과 동일한 2.5 Flash Preview 모델이 기본 선택되었습니다.
+                                    </p>
+                                </div>
                             </div>
-                            <div className="flex space-x-2">
+                            
+                            <div className="flex flex-row md:flex-col gap-2 mt-4 md:mt-0">
                                 <button 
                                     onClick={handleTestApiKey}
                                     disabled={testStatus === 'testing'}
-                                    className={`flex items-center justify-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-bold transition border ${
+                                    className={`flex items-center justify-center space-x-2 px-4 py-2.5 rounded-lg text-sm font-bold transition border h-10 md:w-32 ${
                                         testStatus === 'success' ? 'bg-green-100 text-green-700 border-green-200' :
                                         testStatus === 'error' ? 'bg-red-100 text-red-700 border-red-200' :
                                         'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
@@ -506,7 +498,7 @@
                                 </button>
                                 <button 
                                     onClick={handleSaveApiKey}
-                                    className="flex items-center justify-center space-x-2 bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold transition shadow-md hover:shadow-lg"
+                                    className="flex items-center justify-center space-x-2 bg-yellow-500 hover:bg-yellow-600 text-white px-5 py-2.5 rounded-lg text-sm font-bold transition shadow-md hover:shadow-lg h-10 md:w-32"
                                 >
                                     <Save className="w-4 h-4" />
                                     <span>저장하기</span>
