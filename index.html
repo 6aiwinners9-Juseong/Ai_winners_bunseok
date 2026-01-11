@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>주성사마 쇼츠 분석해서 카피 자동화</title>
+    <title>주성사마 쇼츠 분석해서 카피 자동화 (AI Powered)</title>
     
     <!-- React & ReactDOM (CDN) -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -36,6 +36,13 @@
         }
         .animate-in {
             animation: fadeIn 0.5s ease-out forwards;
+        }
+        .animate-pulse-fast {
+            animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
         }
     </style>
 </head>
@@ -70,6 +77,8 @@
         const Gem = (props) => <Icon {...props} path={<path d="M6 3h12l4 6-10 13L2 9Z" />} />;
         const Save = (props) => <Icon {...props} path={<><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></>} />;
         const Network = (props) => <Icon {...props} path={<><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></>} />;
+        const Wand = (props) => <Icon {...props} path={<><path d="M15 4V2"/><path d="M15 16v-2"/><path d="M8 9h2"/><path d="M20 9h2"/><path d="M17.8 11.8 19 13"/><path d="M15 9h0"/><path d="M17.8 6.2 19 5"/><path d="m3 21 9-9"/><path d="M12.2 6.2 11 5"/></>} />;
+        const Hash = (props) => <Icon {...props} path={<><line x1="4" y1="9" x2="20" y2="9"/><line x1="4" y1="15" x2="20" y2="15"/><line x1="10" y1="3" x2="8" y2="21"/><line x1="16" y1="3" x2="14" y2="21"/></>} />;
 
         const ViralContentBuilder = () => {
             const [url, setUrl] = useState('');
@@ -82,25 +91,32 @@
             
             // API Key & Model State
             const [apiKey, setApiKey] = useState('');
-            // [분석 결과 반영] 체크리스트 파일과 동일한 모델을 기본값으로 설정
-            const [selectedModel, setSelectedModel] = useState('gemini-2.5-flash-preview-09-2025'); 
+            const [selectedModel, setSelectedModel] = useState('gemini-1.5-pro'); // 검색에 강한 모델 기본값
+            const [customModelId, setCustomModelId] = useState('');
             const [showSettings, setShowSettings] = useState(false);
             const [error, setError] = useState(null);
             const [testStatus, setTestStatus] = useState('idle');
+            
+            // Magic Script Rewriting State
+            const [rewritingId, setRewritingId] = useState(null);
 
-            // 사용 가능한 모델 목록 (업데이트됨)
             const availableModels = [
-                { id: 'gemini-2.5-flash-preview-09-2025', name: 'Gemini 2.5 Flash Preview (체크리스트와 동일/추천)' },
-                { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (일반)' },
-                { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (고성능)' },
-                { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (실험적)' }
+                { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro (검색 분석 최적/강력 추천)' },
+                { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash (최신 속도 중심)' },
+                { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (가성비)' },
+                { id: 'gemini-2.5-flash-preview-09-2025', name: 'Gemini 2.5 Preview (기타)' },
+                { id: 'gemini-3.0-pro-exp', name: 'Gemini 3.0 Pro (초신성/실험적)' },
+                { id: 'custom', name: '직접 입력 (Custom ID)' }
             ];
 
             useEffect(() => {
                 const storedKey = localStorage.getItem('gemini_api_key');
                 const storedModel = localStorage.getItem('gemini_model');
+                const storedCustomId = localStorage.getItem('gemini_custom_id');
+                
                 if (storedKey) setApiKey(storedKey);
                 if (storedModel) setSelectedModel(storedModel);
+                if (storedCustomId) setCustomModelId(storedCustomId);
             }, []);
 
             const handleSaveApiKey = () => {
@@ -110,12 +126,14 @@
                 }
                 localStorage.setItem('gemini_api_key', apiKey.trim());
                 localStorage.setItem('gemini_model', selectedModel);
+                if(selectedModel === 'custom') {
+                    localStorage.setItem('gemini_custom_id', customModelId);
+                }
                 setShowSettings(false);
                 setToastMessage("설정이 저장되었습니다.");
                 setTimeout(() => setToastMessage(null), 3000);
             };
 
-            // 연결 테스트 (체크리스트 파일과 동일한 로직 적용)
             const handleTestApiKey = async () => {
                 if (!apiKey.trim()) {
                     setTestStatus('error');
@@ -123,10 +141,15 @@
                     return;
                 }
                 
+                const modelToUse = selectedModel === 'custom' ? customModelId : selectedModel;
+                if (!modelToUse) {
+                    setToastMessage("모델 ID를 확인해주세요.");
+                    return;
+                }
+
                 setTestStatus('testing');
                 try {
-                    // 간단한 테스트용 페이로드
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey.trim()}`, {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey.trim()}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: [{ parts: [{ text: "Hello" }] }] })
@@ -134,7 +157,7 @@
 
                     if (response.ok) {
                         setTestStatus('success');
-                        setToastMessage(`연결 성공! (${selectedModel})`);
+                        setToastMessage(`연결 성공! (${modelToUse})`);
                     } else {
                         const errData = await response.json().catch(() => ({}));
                         throw new Error(errData.error?.message || `HTTP ${response.status}`);
@@ -146,86 +169,151 @@
                 }
             };
 
-            // Gemini API 호출 함수 (체크리스트의 재시도 로직 적용)
-            const callGeminiAPI = async (targetUrl, topic) => {
-                const contentContext = topic 
-                ? `Content Topic/Description: "${topic}"` 
-                : `Content URL: "${targetUrl}" (User provided only URL. If you can't access the specific video, analyze the typical viral pattern for this platform and generate a plan for a "Trending Viral Hit" in Korea, assuming a popular category like Vlog, Cafe, or Humor.)`;
+            // ✨ 매직 스크립트 수정 기능 (단일 씬 수정)
+            const handleRewriteScript = async (sceneId, type) => {
+                if (!apiKey || rewritingId) return;
+                
+                const scene = result.scenes.find(s => s.id === sceneId);
+                if (!scene) return;
 
+                setRewritingId(sceneId);
+                setToastMessage("AI가 대본을 수정하고 있습니다...");
+
+                const modelToUse = selectedModel === 'custom' ? customModelId : selectedModel;
                 const prompt = `
-                You are a Viral Content Architect. Analyze the provided content info and create a viral content plan.
+                Rewrite the following short video script segment to be "${type}".
+                Original Script: "${scene.script}"
                 
-                Input Info:
-                ${contentContext}
-                ${targetUrl ? `Target Platform URL: ${targetUrl}` : ''}
-                
-                Task:
-                1. Analyze why this type of content goes viral (Hook, Retention).
-                2. Create a 6-scene script & storyboard.
-                3. Generate prompts for Nano Banana Pro (Image) and Video Generation AI.
-                4. Write a blog post draft.
+                Constraints:
+                - Keep it distinct and impactful.
+                - Keep it under 50 words.
+                - Korean language only.
+                - Return ONLY the rewritten text.
+                `;
 
-                Return ONLY a raw JSON object (no markdown formatting) with the following structure:
+                try {
+                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey.trim()}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        const newScript = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+                        if (newScript) {
+                            // 결과 업데이트
+                            const newScenes = result.scenes.map(s => 
+                                s.id === sceneId ? { ...s, script: newScript } : s
+                            );
+                            setResult({ ...result, scenes: newScenes });
+                            setToastMessage("수정 완료! ✨");
+                        }
+                    }
+                } catch (e) {
+                    console.error("Rewrite failed", e);
+                    setToastMessage("수정 실패. 다시 시도해주세요.");
+                } finally {
+                    setRewritingId(null);
+                    setTimeout(() => setToastMessage(null), 2000);
+                }
+            };
+
+            const callGeminiAPI = async (targetUrl, topic) => {
+                const modelToUse = selectedModel === 'custom' ? customModelId : selectedModel;
+                const contentContext = topic 
+                ? `사용자 요청 사항: "${topic}"` 
+                : `(사용자 요청 사항 없음. URL 분석에 집중할 것)`;
+
+                // [프롬프트 업데이트] 썸네일 카피와 해시태그 요청 추가
+                const prompt = `
+                Role: You are a professional Video Analyst and Content Planner.
+                
+                [CRITICAL MISSION]
+                The user has provided a URL: "${targetUrl}"
+                
+                1. IF the Google Search tool is available, YOU MUST use it to search for this specific URL or video title to find its real content, transcript, and comments.
+                2. IF you cannot access the URL content via tools, DO NOT HALLUCINATE. Analyze based strictly on the visible URL pattern if possible.
+                3. Based on the *real* content found, create a viral strategy.
+
+                User Context: ${contentContext}
+
+                Return ONLY a raw JSON object (no markdown) with the following structure:
                 {
                     "analysis": { 
-                    "hook": "Analysis of the hook (Korean)", 
-                    "retention": "Retention strategy (Korean)", 
-                    "viralFactor": "Why it goes viral (Korean)", 
-                    "improvedStrategy": "How to improve it (Korean)" 
+                        "hook": "Why this specific video hooked viewers (Korean)", 
+                        "retention": "Editor's technique for retention (Korean)", 
+                        "viralFactor": "Core viral reason (Korean)", 
+                        "improvedStrategy": "How to make it even better (Korean)" 
                     },
+                    "thumbnailIdeas": ["Catchy Thumbnail Text 1", "Catchy Thumbnail Text 2"],
+                    "hashtags": ["#tag1", "#tag2", "#tag3", "#tag4", "#tag5"],
                     "scenes": [
-                    {
-                        "id": 1,
-                        "script": "Narrator script or sound effect (Korean)",
-                        "visualDesc": "Visual description (Korean)",
-                        "imagePrompt": "High quality image generation prompt for Scene 1 (English, 8K, Photorealistic, Korean background/style, Nano Banana Pro style)",
-                        "videoPrompt": "Video generation prompt for Scene 1 (English, Camera movement, etc)"
-                    }
-                    // ... Generate exactly 6 scenes
+                        {
+                            "id": 1,
+                            "script": "Korean Narration",
+                            "visualDesc": "Korean Visual Description",
+                            "imagePrompt": "English Image Prompt (8K, Realistic, Korean style)",
+                            "videoPrompt": "English Video Prompt"
+                        }
+                        // ... Generate 6 scenes
                     ],
                     "editingGuide": [
-                    "Editing tip 1 (Korean)",
-                    "Editing tip 2 (Korean)",
-                    "Editing tip 3 (Korean)",
-                    "Editing tip 4 (Korean)"
+                        "Tip 1 (Korean)", "Tip 2 (Korean)", "Tip 3 (Korean)", "Tip 4 (Korean)"
                     ],
                     "blogPost": {
-                    "title": "Blog post title (Korean)",
-                    "content": "Blog post content (Korean)"
+                        "title": "Korean Blog Title",
+                        "content": "Korean Blog Content"
                     }
                 }
                 `;
 
-                // [분석 결과 반영] 체크리스트 파일에 있는 딜레이 로직 (1초, 2초, 4초 재시도)
-                const delays = [1000, 2000, 4000];
+                const requestBody = {
+                    contents: [{
+                        parts: [{ text: prompt }]
+                    }],
+                    tools: [{
+                        google_search: {} 
+                    }]
+                };
+
+                const delays = [1000, 3000];
                 let lastError = null;
 
                 for (let i = 0; i <= delays.length; i++) {
                     try {
-                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey.trim()}`, {
+                        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey.trim()}`, {
                             method: 'POST',
-                            headers: {
-                            'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                            contents: [{
-                                parts: [{ text: prompt }]
-                            }]
-                            })
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody)
                         });
 
                         if (!response.ok) {
                             const errorData = await response.json().catch(() => ({}));
                             const errorMessage = errorData.error?.message || `오류 코드: ${response.status}`;
-                            throw new Error(`AI 호출 실패 (${selectedModel}): ${errorMessage}`);
+                            
+                            // Tool 지원 안함 오류 처리 (Fallback)
+                            if (response.status === 400 && errorMessage.includes("tool")) {
+                                console.warn("Model doesn't support tools, retrying without tools...");
+                                const noToolBody = { contents: [{ parts: [{ text: prompt + "\n(Note: Search tool unavailable, please infer from URL structure or common viral patterns)" }] }] };
+                                const retryResp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelToUse}:generateContent?key=${apiKey.trim()}`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(noToolBody)
+                                });
+                                if (retryResp.ok) {
+                                    const retryData = await retryResp.json();
+                                    const text = retryData.candidates?.[0]?.content?.parts?.[0]?.text;
+                                    if (text) return JSON.parse(text.replace(/```json/g, '').replace(/```/g, '').trim());
+                                }
+                            }
+                            throw new Error(`AI 호출 실패 (${modelToUse}): ${errorMessage}`);
                         }
 
                         const data = await response.json();
                         const textResponse = data.candidates?.[0]?.content?.parts?.[0]?.text;
                         
-                        if (!textResponse) {
-                            throw new Error("AI 응답이 비어있습니다.");
-                        }
+                        if (!textResponse) throw new Error("AI 응답이 비어있습니다.");
 
                         const cleanJson = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
                         return JSON.parse(cleanJson);
@@ -233,47 +321,38 @@
                     } catch (err) {
                         console.warn(`Attempt ${i + 1} failed:`, err);
                         lastError = err;
-                        
-                        // 마지막 시도였다면 에러 던지기
                         if (i === delays.length) break;
-                        
-                        // 재시도 대기 (Delay)
                         await new Promise(resolve => setTimeout(resolve, delays[i]));
                     }
                 }
-                
-                throw lastError || new Error("모든 재시도 실패. 네트워크 상태나 API 키를 확인해주세요.");
+                throw lastError || new Error("분석 실패. 다른 모델을 선택하거나 키를 확인하세요.");
             };
 
             const generateContent = async () => {
                 if (!description && !url) return;
-                
                 setError(null);
                 setIsGenerating(true);
                 setActiveStep(0);
                 
                 if (!apiKey) {
-                runSimulation();
-                return;
+                    runSimulation();
+                    return;
                 }
 
                 try {
-                setActiveStep(1); 
-                
-                const aiData = await callGeminiAPI(url, description);
-                
-                setActiveStep(2);
-                await new Promise(r => setTimeout(r, 800)); 
-                setActiveStep(3);
-                await new Promise(r => setTimeout(r, 800)); 
-                setActiveStep(4);
-                
-                setResult(aiData);
-                setActiveStep(5);
+                    setActiveStep(1); 
+                    const aiData = await callGeminiAPI(url, description);
+                    setActiveStep(2);
+                    await new Promise(r => setTimeout(r, 500)); 
+                    setActiveStep(3);
+                    await new Promise(r => setTimeout(r, 500)); 
+                    setActiveStep(4);
+                    setResult(aiData);
+                    setActiveStep(5);
                 } catch (err) {
-                setError(err.message);
+                    setError(err.message);
                 } finally {
-                setIsGenerating(false);
+                    setIsGenerating(false);
                 }
             };
 
@@ -284,107 +363,95 @@
                 setTimeout(() => setActiveStep(4), 6000);
 
                 setTimeout(() => {
-                const topic = description || "URL 기반 트렌드 분석 (자동 감지)";
-                const generatedData = createMockData(topic);
-                setResult(generatedData);
-                setIsGenerating(false);
-                setActiveStep(5);
+                    const topic = description || "URL 기반 트렌드 분석 (자동 감지)";
+                    const generatedData = createMockData(topic);
+                    setResult(generatedData);
+                    setIsGenerating(false);
+                    setActiveStep(5);
                 }, 7500);
             };
 
             const createMockData = (topic) => {
                 return {
-                analysis: {
-                    hook: "초반 3초 시각적 충격과 반전 요소 (데모)",
-                    retention: "빠른 컷 편집과 ASMR 사운드로 몰입도 유지",
-                    viralFactor: "현실적인 공감대 형성과 고급스러운 영상미의 조화",
-                    improvedStrategy: "기존 영상보다 색감의 대비를 높이고, 한국적인 배경을 더 디테일하게 묘사."
-                },
-                scenes: [
-                    {
-                    id: 1,
-                    script: "(내레이션) 이거 아직도 모르는 사람 없죠? (데모 데이터)",
-                    visualDesc: "서울 강남의 번화가, 비 온 뒤 젖은 아스팔트.",
-                    imagePrompt: `Scene 1: Hyper-realistic 8K wide shot of a bustling Gangnam street at night after rain. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Cinematic drone shot, low angle, moving forward quickly.`,
+                    analysis: {
+                        hook: "초반 3초 시각적 충격과 반전 요소 (데모)",
+                        retention: "빠른 컷 편집과 ASMR 사운드로 몰입도 유지",
+                        viralFactor: "현실적인 공감대 형성과 고급스러운 영상미의 조화",
+                        improvedStrategy: "기존 영상보다 색감의 대비를 높이고, 한국적인 배경을 더 디테일하게 묘사."
                     },
-                    {
-                    id: 2,
-                    script: "(효과음: 뚜벅뚜벅) 바로 여기입니다.",
-                    visualDesc: "트렌디한 성수동 스타일의 카페 입구.",
-                    imagePrompt: `Scene 2: Extreme close-up of a modern cafe entrance in Seongsu-dong style. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Handheld camera movement, approaching a glass door.`,
-                    },
-                    {
-                    id: 3,
-                    script: "(내레이션) 와... 이 비주얼 실화인가요?",
-                    visualDesc: "테이블 위에 놓인 화려한 디저트.",
-                    imagePrompt: `Scene 3: Top-down food photography shot of an exquisite dessert. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Slow orbit shot around a dessert.`,
-                    },
-                    {
-                    id: 4,
-                    script: "(내레이션) 진짜 대박인 건 따로 있어요.",
-                    visualDesc: "주인공이 놀란 표정으로 무언가를 가리킴.",
-                    imagePrompt: `Scene 4: Medium shot of a handsome Korean man looking shocked. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Camera zooms in quickly (Crash Zoom).`,
-                    },
-                    {
-                    id: 5,
-                    script: "(빠른 템포) 이렇게 하면 순식간에 해결됩니다.",
-                    visualDesc: "빠르게 지나가는 해결 과정의 몽타주.",
-                    imagePrompt: `Scene 5: Action shot, motion blur. Hands working on a project. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Time-lapse style or fast-forward motion.`,
-                    },
-                    {
-                    id: 6,
-                    script: "(내레이션) 더 자세한 정보는 프로필 링크 확인!",
-                    visualDesc: "주인공이 스마트폰을 들고 웃으며 화면을 보여줌.",
-                    imagePrompt: `Scene 6: Close-up of a smartphone screen being held up. --ar 9:16 --v 6.0`,
-                    videoPrompt: `Camera focuses on the smartphone screen then racks focus.`,
-                    },
-                ],
-                editingGuide: [
-                    "Scene 1과 2 사이는 '줌인 트랜지션'으로 연결하세요.",
-                    "글리치 효과와 임팩트 있는 효과음을 넣으세요.",
-                    "Teal & Orange 톤으로 색보정하세요.",
-                    "배경음악은 트렌디한 R&B로 구성하세요."
-                ],
-                blogPost: {
-                    title: `[충격] ${topic} 아직도 모르시나요?`,
-                    content: `안녕하세요! 오늘은 '${topic}'에 대해 이야기해보려 합니다.\n\n이 영상이 조회수가 폭발하는 이유는 시각적인 훅과 공감대 형성 때문입니다.\n\n(이 내용은 API Key를 입력하지 않아 생성된 데모 데이터입니다.)`
-                }
+                    thumbnailIdeas: ["이거 모르면 손해 😱", "서울 핫플 TOP 3🔥"],
+                    hashtags: ["#서울맛집", "#성수동", "#데이트코스", "#릴스", "#브이로그"],
+                    scenes: [
+                        {
+                            id: 1,
+                            script: "(내레이션) 이거 아직도 모르는 사람 없죠? 서울에서 가장 핫한 이곳.",
+                            visualDesc: "서울 강남의 번화가, 비 온 뒤 젖은 아스팔트에 네온사인이 반사되는 밤거리.",
+                            imagePrompt: `Scene 1: Hyper-realistic 8K wide shot of a bustling Gangnam street at night...`,
+                            videoPrompt: `Cinematic drone shot, low angle, moving forward quickly...`,
+                        },
+                        {
+                            id: 2,
+                            script: "(효과음: 뚜벅뚜벅) 바로 여기입니다.",
+                            visualDesc: "트렌디한 성수동 스타일의 카페 입구.",
+                            imagePrompt: `Scene 2: Extreme close-up of a modern cafe entrance...`,
+                            videoPrompt: `Handheld camera movement, approaching a glass door...`,
+                        },
+                        {
+                            id: 3,
+                            script: "(내레이션) 와... 이 비주얼 실화인가요?",
+                            visualDesc: "테이블 위에 놓인 화려한 디저트.",
+                            imagePrompt: `Scene 3: Top-down food photography shot...`,
+                            videoPrompt: `Slow orbit shot around a dessert...`,
+                        },
+                        {
+                            id: 4,
+                            script: "(내레이션) 진짜 대박인 건 따로 있어요.",
+                            visualDesc: "주인공이 놀란 표정으로 무언가를 가리킴.",
+                            imagePrompt: `Scene 4: Medium shot of a handsome Korean man looking shocked...`,
+                            videoPrompt: `Camera zooms in quickly (Crash Zoom)...`,
+                        },
+                        {
+                            id: 5,
+                            script: "(빠른 템포) 이렇게 하면 순식간에 해결됩니다.",
+                            visualDesc: "빠르게 지나가는 해결 과정의 몽타주.",
+                            imagePrompt: `Scene 5: Action shot, motion blur...`,
+                            videoPrompt: `Time-lapse style or fast-forward motion...`,
+                        },
+                        {
+                            id: 6,
+                            script: "(내레이션) 더 자세한 정보는 프로필 링크 확인!",
+                            visualDesc: "주인공이 스마트폰을 들고 웃으며 화면을 보여줌.",
+                            imagePrompt: `Scene 6: Close-up of a smartphone screen...`,
+                            videoPrompt: `Camera focuses on the smartphone screen then racks focus...`,
+                        },
+                    ],
+                    editingGuide: ["Scene 1과 2 사이는 '줌인 트랜지션'...", "글리치 효과..."],
+                    blogPost: {
+                        title: `[충격] ${topic} 아직도 모르시나요?`,
+                        content: `안녕하세요! 오늘은 '${topic}'에 대해 이야기해보려 합니다...`
+                    }
                 };
             };
 
             const copyTextToClipboard = async (text) => {
                 if (navigator.clipboard && navigator.clipboard.writeText) {
-                    try {
-                        await navigator.clipboard.writeText(text);
-                        return;
-                    } catch (err) {
-                        console.warn("Clipboard API failed, trying fallback...", err);
-                    }
+                    try { await navigator.clipboard.writeText(text); return; } 
+                    catch (err) { console.warn("Clipboard API failed", err); }
                 }
-                
                 try {
                     const textArea = document.createElement("textarea");
                     textArea.value = text;
                     textArea.style.position = "fixed";
                     textArea.style.left = "-9999px";
-                    textArea.style.top = "0";
-                    
                     document.body.appendChild(textArea);
                     textArea.focus();
                     textArea.select();
-                    
                     const successful = document.execCommand('copy');
                     document.body.removeChild(textArea);
-                    
-                    if (!successful) throw new Error("Fallback copy failed.");
+                    if (!successful) throw new Error("Fallback failed");
                 } catch (err) {
                     console.error("Copy failed", err);
-                    alert("복사에 실패했습니다. 브라우저 권한을 확인해주세요.");
+                    alert("복사 실패. 브라우저 권한을 확인해주세요.");
                 }
             };
 
@@ -396,9 +463,8 @@
 
             const handleOpenGenerator = async (prompt) => {
                 await copyTextToClipboard(prompt);
-                setToastMessage("프롬프트가 복사되었습니다! 자동으로 열리는 창에서 Ctrl+V 하세요.");
+                setToastMessage("프롬프트 복사 완료! 생성 창으로 이동합니다.");
                 setTimeout(() => setToastMessage(null), 4000);
-                
                 const baseUrl = "https://nano-banana-pro.ai/generate"; 
                 const targetUrl = `${baseUrl}?prompt=${encodeURIComponent(prompt)}`;
                 window.open(targetUrl, '_blank');
@@ -409,11 +475,7 @@
                     {toastMessage && (
                         <div className="fixed top-20 left-1/2 transform -translate-x-1/2 z-50 animate-in">
                         <div className="bg-gray-900/90 text-white px-6 py-3 rounded-full shadow-2xl flex items-center space-x-3 backdrop-blur-sm border border-gray-700">
-                            {testStatus === 'error' ? (
-                                <AlertCircle className="w-5 h-5 text-red-400" />
-                            ) : (
-                                <Check className="w-5 h-5 text-green-400" />
-                            )}
+                            {testStatus === 'error' ? <AlertCircle className="w-5 h-5 text-red-400" /> : <Check className="w-5 h-5 text-green-400" />}
                             <span className="font-medium text-sm">{toastMessage}</span>
                         </div>
                         </div>
@@ -473,9 +535,17 @@
                                             <option key={model.id} value={model.id}>{model.name}</option>
                                         ))}
                                     </select>
-                                    <p className="text-xs text-gray-500 mt-2">
-                                        * 체크리스트 파일과 동일한 2.5 Flash Preview 모델이 기본 선택되었습니다.
-                                    </p>
+                                    {selectedModel === 'custom' && (
+                                        <div className="mt-2">
+                                            <input 
+                                                type="text" 
+                                                value={customModelId}
+                                                onChange={(e) => setCustomModelId(e.target.value)}
+                                                placeholder="예: gemini-3.0-pro-001"
+                                                className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-yellow-500 outline-none"
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                             
@@ -489,11 +559,7 @@
                                         'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'
                                     }`}
                                 >
-                                    {testStatus === 'testing' ? (
-                                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div>
-                                    ) : (
-                                        <Network className="w-4 h-4" />
-                                    )}
+                                    {testStatus === 'testing' ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-current"></div> : <Network className="w-4 h-4" />}
                                     <span>연결 테스트</span>
                                 </button>
                                 <button 
@@ -516,261 +582,160 @@
                         </div>
                         )}
 
+                        {/* Input Area */}
                         <div className="bg-white rounded-2xl p-6 mb-8 border border-gray-200 shadow-lg">
                         <div className="flex flex-col md:flex-row gap-6">
                             <div className="flex-1 space-y-6">
-                            
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center justify-between">
-                                <span className="flex items-center">
-                                    <LinkIcon className="h-4 w-4 mr-1.5 text-pink-500" />
-                                    분석할 레퍼런스 URL (필수 또는 선택)
-                                </span>
-                                {url && !description && (
-                                    <span className="text-xs text-pink-600 font-medium bg-pink-50 px-2 py-0.5 rounded-full animate-pulse">
-                                    URL 기반 자동 분석 모드
-                                    </span>
-                                )}
+                                <span className="flex items-center"><LinkIcon className="h-4 w-4 mr-1.5 text-pink-500" />분석할 레퍼런스 URL (필수)</span>
+                                {url && !description && <span className="text-xs text-pink-600 font-medium bg-pink-50 px-2 py-0.5 rounded-full animate-pulse">AI가 링크를 검색하여 분석합니다</span>}
                                 </label>
                                 <div className="relative">
-                                <input 
-                                    type="text" 
-                                    value={url}
-                                    onChange={(e) => setUrl(e.target.value)}
-                                    placeholder="https://www.instagram.com/reels/... 또는 YouTube Shorts 링크"
-                                    className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 px-4 focus:ring-2 focus:ring-yellow-500 focus:bg-white outline-none transition text-gray-900 placeholder-gray-400"
-                                />
+                                <input type="text" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.instagram.com/reels/... 또는 YouTube Shorts 링크" className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 px-4 focus:ring-2 focus:ring-yellow-500 focus:bg-white outline-none transition text-gray-900 placeholder-gray-400" />
                                 </div>
                             </div>
-
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 mb-2 flex items-center justify-between">
-                                <span className="flex items-center">
-                                    <FileText className="h-4 w-4 mr-1.5 text-blue-500" />
-                                    제작하고 싶은 영상 설명 (선택)
-                                </span>
-                                <span className="text-xs text-gray-500 font-medium bg-gray-100 px-2 py-0.5 rounded-full">
-                                    AI에게 내리는 지령 (비워두면 URL 기반 자동 생성)
-                                </span>
+                                <span className="flex items-center"><FileText className="h-4 w-4 mr-1.5 text-blue-500" />추가 설명 (선택사항)</span>
                                 </label>
-                                
-                                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mb-2">
-                                <div className="flex items-start space-x-2">
-                                    <HelpCircle className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
-                                    <div className="text-xs text-blue-800 leading-relaxed">
-                                    <strong>Tip:</strong> URL만 입력해도 AI가 해당 링크의 플랫폼 특성에 맞는 트렌디한 영상을 기획해줍니다. 더 정확한 결과를 원하시면 설명을 추가해주세요.
-                                    </div>
-                                </div>
-                                </div>
-
-                                <textarea 
-                                value={description}
-                                onChange={(e) => setDescription(e.target.value)}
-                                placeholder="예시) 서울 성수동의 힙한 빈티지 카페 브이로그를 만들고 싶어. 비 오는 날 창가 자리의 감성적인 분위기와 따뜻한 라떼 아트가 포인트야. 마지막에는 카페 사장님의 반전 멘트로 웃기게 끝내줘."
-                                className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 px-4 h-32 focus:ring-2 focus:ring-yellow-500 focus:bg-white outline-none transition resize-none text-gray-900 placeholder-gray-400 leading-relaxed"
-                                />
+                                <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="예: 빈티지 감성으로 분석해줘, 20대 타겟으로 변경해줘 등" className="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 px-4 h-32 focus:ring-2 focus:ring-yellow-500 focus:bg-white outline-none transition resize-none text-gray-900 placeholder-gray-400 leading-relaxed" />
                             </div>
                             </div>
-
                             <div className="flex flex-col justify-end md:w-56">
-                            <button 
-                                onClick={generateContent}
-                                disabled={isGenerating || (!description && !url)}
-                                className={`h-16 rounded-2xl font-bold text-lg flex items-center justify-center space-x-2 transition-all transform hover:-translate-y-1 shadow-md ${
-                                isGenerating || (!description && !url)
-                                    ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
-                                    : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white hover:from-amber-400 hover:to-yellow-400 shadow-yellow-200'
-                                }`}
-                            >
-                                {isGenerating ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                    <span>
-                                    {apiKey ? 'AI 기획 중...' : '분석 시뮬레이션...'}
-                                    </span>
-                                </>
-                                ) : (
-                                <>
-                                    <Sparkles className="w-5 h-5 fill-current" />
-                                    <span>콘텐츠 자동 생성</span>
-                                </>
-                                )}
+                            <button onClick={generateContent} disabled={isGenerating || (!description && !url)} className={`h-16 rounded-2xl font-bold text-lg flex items-center justify-center space-x-2 transition-all transform hover:-translate-y-1 shadow-md ${isGenerating || (!description && !url) ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' : 'bg-gradient-to-r from-amber-500 to-yellow-500 text-white hover:from-amber-400 hover:to-yellow-400 shadow-yellow-200'}`}>
+                                {isGenerating ? <><div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div><span>{apiKey ? 'AI 기획 중...' : '분석 시뮬레이션...'}</span></> : <><Sparkles className="w-5 h-5 fill-current" /><span>콘텐츠 자동 생성</span></>}
                             </button>
                             </div>
                         </div>
                         </div>
 
-                        {isGenerating && (
-                        <div className="mb-8 grid grid-cols-4 gap-4">
-                            {['성공 요인 분석', '대본 & 이미지 프롬프트', '영상 생성 프롬프트', '편집 & 블로그 발행'].map((step, idx) => (
-                            <div key={idx} className={`relative overflow-hidden rounded-xl p-4 text-center border transition-all duration-500 shadow-sm ${
-                                activeStep > idx ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 
-                                activeStep === idx ? 'bg-white border-yellow-500 text-yellow-900 ring-2 ring-yellow-100' : 
-                                'bg-gray-50 border-gray-200 text-gray-400'
-                            }`}>
-                                <div className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">Step {idx + 1}</div>
-                                <div className="text-sm font-bold">{step}</div>
-                            </div>
-                            ))}
-                        </div>
-                        )}
-
+                        {/* Results */}
                         {result && !isGenerating && (
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in">
                             <div className="lg:col-span-1 space-y-6">
-                            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
-                                <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800 mb-4 pb-3 border-b border-gray-100">
-                                <div className="p-1.5 bg-green-100 rounded-lg text-green-600">
-                                    <BarChart2 className="w-5 h-5" />
+                                {/* Thumbnail & Hashtags (New Feature) */}
+                                <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg border-t-4 border-t-pink-500">
+                                    <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800 mb-4 pb-3 border-b border-gray-100">
+                                        <div className="p-1.5 bg-pink-100 rounded-lg text-pink-600"><ImageIcon className="w-5 h-5" /></div>
+                                        <span>AI 추천 썸네일 & 태그</span>
+                                    </h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <span className="text-xs font-bold text-gray-500 uppercase mb-2 block">썸네일 문구 (텍스트)</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {result.thumbnailIdeas && result.thumbnailIdeas.map((idea, idx) => (
+                                                    <span key={idx} className="bg-pink-50 text-pink-700 px-3 py-1.5 rounded-lg text-sm font-bold border border-pink-100">{idea}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <span className="text-xs font-bold text-gray-500 uppercase mb-2 block">추천 해시태그</span>
+                                            <div className="flex flex-wrap gap-2">
+                                                {result.hashtags && result.hashtags.map((tag, idx) => (
+                                                    <span key={idx} className="text-blue-600 text-xs bg-blue-50 px-2 py-1 rounded">
+                                                        <Hash className="w-3 h-3 inline mr-0.5" />{tag.replace('#','')}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <span>AI 분석 리포트</span>
-                                </h3>
-                                <div className="space-y-4">
-                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                    <span className="text-xs text-gray-500 uppercase font-bold block mb-1.5">Viral Hook</span>
-                                    <p className="text-sm text-gray-800 font-medium leading-relaxed">{result.analysis.hook}</p>
-                                </div>
-                                <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                                    <span className="text-xs text-gray-500 uppercase font-bold block mb-1.5">Retention Strategy</span>
-                                    <p className="text-sm text-gray-800 font-medium leading-relaxed">{result.analysis.retention}</p>
-                                </div>
-                                <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
-                                    <span className="text-xs text-yellow-600 uppercase font-bold block mb-1.5">Upgrade Plan</span>
-                                    <p className="text-sm text-yellow-900 font-medium leading-relaxed">{result.analysis.improvedStrategy}</p>
-                                </div>
-                                </div>
-                            </div>
 
-                            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
-                                <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800 mb-4 pb-3 border-b border-gray-100">
-                                <div className="p-1.5 bg-blue-100 rounded-lg text-blue-600">
-                                    <Scissors className="w-5 h-5" />
+                                <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
+                                    <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800 mb-4 pb-3 border-b border-gray-100">
+                                        <div className="p-1.5 bg-green-100 rounded-lg text-green-600"><BarChart2 className="w-5 h-5" /></div>
+                                        <span>AI 분석 리포트</span>
+                                    </h3>
+                                    <div className="space-y-4">
+                                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                            <span className="text-xs text-gray-500 uppercase font-bold block mb-1.5">Viral Hook</span>
+                                            <p className="text-sm text-gray-800 font-medium leading-relaxed">{result.analysis.hook}</p>
+                                        </div>
+                                        <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                            <span className="text-xs text-gray-500 uppercase font-bold block mb-1.5">Retention Strategy</span>
+                                            <p className="text-sm text-gray-800 font-medium leading-relaxed">{result.analysis.retention}</p>
+                                        </div>
+                                        <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
+                                            <span className="text-xs text-yellow-600 uppercase font-bold block mb-1.5">Upgrade Plan</span>
+                                            <p className="text-sm text-yellow-900 font-medium leading-relaxed">{result.analysis.improvedStrategy}</p>
+                                        </div>
+                                    </div>
                                 </div>
-                                <span>편집 가이드</span>
-                                </h3>
-                                <ul className="space-y-4">
-                                {result.editingGuide.map((guide, idx) => (
-                                    <li key={idx} className="flex items-start space-x-3 text-sm text-gray-700">
-                                    <span className="flex-shrink-0 w-6 h-6 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold border border-blue-100">{idx + 1}</span>
-                                    <span className="mt-0.5 leading-relaxed">{guide}</span>
-                                    </li>
-                                ))}
-                                </ul>
-                            </div>
                             </div>
 
                             <div className="lg:col-span-2 space-y-6">
-                            <div className="bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
-                                <div className="bg-white p-5 border-b border-gray-200 flex justify-between items-center">
-                                <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800">
-                                    <div className="p-1.5 bg-purple-100 rounded-lg text-purple-600">
-                                    <Layout className="w-5 h-5" />
+                                <div className="bg-white rounded-2xl border border-gray-200 shadow-lg overflow-hidden">
+                                    <div className="bg-white p-5 border-b border-gray-200 flex justify-between items-center">
+                                        <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800">
+                                            <div className="p-1.5 bg-purple-100 rounded-lg text-purple-600"><Layout className="w-5 h-5" /></div>
+                                            <span>6-Scene Pipeline</span>
+                                        </h3>
+                                        <span className="text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full font-semibold border border-purple-100">Nano Banana Pro Optimized</span>
                                     </div>
-                                    <span>6-Scene Pipeline</span>
-                                </h3>
-                                <span className="text-xs bg-purple-50 text-purple-700 px-3 py-1.5 rounded-full font-semibold border border-purple-100">Nano Banana Pro Optimized</span>
-                                </div>
-                                
-                                <div className="divide-y divide-gray-100">
-                                {result.scenes.map((scene) => (
-                                    <div key={scene.id} className="p-6 hover:bg-gray-50 transition-colors">
-                                    <div className="flex justify-between items-start mb-5">
-                                        <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-gray-900 text-xs font-bold text-white shadow-sm">
-                                        SCENE {scene.id}
-                                        </span>
-                                    </div>
-                                    
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                                        <div className="space-y-5">
-                                        <div>
-                                            <span className="text-xs text-gray-400 font-bold uppercase tracking-wide">Script (Audio)</span>
-                                            <p className="text-gray-900 font-semibold bg-white p-4 rounded-xl border border-gray-200 shadow-sm mt-2 leading-relaxed text-lg">
-                                            {scene.script}
-                                            </p>
-                                        </div>
-                                        <div>
-                                            <span className="text-xs text-gray-400 font-bold uppercase tracking-wide">Visual Content</span>
-                                            <p className="text-sm text-gray-600 mt-2 leading-relaxed">{scene.visualDesc}</p>
-                                        </div>
-                                        </div>
-
-                                        <div className="space-y-4">
-                                        <div className="relative group">
-                                            <div className="flex justify-between items-center mb-2">
-                                            <span className="text-xs text-pink-600 font-bold uppercase flex items-center bg-pink-50 px-2 py-0.5 rounded">
-                                                <ImageIcon className="w-3 h-3 mr-1.5" /> Image Prompt
-                                            </span>
+                                    <div className="divide-y divide-gray-100">
+                                    {result.scenes.map((scene) => (
+                                        <div key={scene.id} className="p-6 hover:bg-gray-50 transition-colors">
+                                            <div className="flex justify-between items-start mb-5">
+                                                <span className="inline-flex items-center justify-center px-3 py-1 rounded-full bg-gray-900 text-xs font-bold text-white shadow-sm">SCENE {scene.id}</span>
+                                                
+                                                {/* ✨ Magic Script Buttons */}
+                                                <div className="flex space-x-2">
+                                                    <span className="text-xs text-gray-400 flex items-center mr-2"><Wand className="w-3 h-3 mr-1" />AI 수정:</span>
+                                                    <button onClick={() => handleRewriteScript(scene.id, 'make it shorter and punchy')} disabled={rewritingId === scene.id} className="text-xs bg-white border border-gray-200 hover:border-purple-400 hover:text-purple-600 px-2 py-1 rounded transition">더 짧게</button>
+                                                    <button onClick={() => handleRewriteScript(scene.id, 'make it more provocative and emotional')} disabled={rewritingId === scene.id} className="text-xs bg-white border border-gray-200 hover:border-red-400 hover:text-red-600 px-2 py-1 rounded transition">더 자극적으로</button>
+                                                    <button onClick={() => handleRewriteScript(scene.id, 'phrase it as a question')} disabled={rewritingId === scene.id} className="text-xs bg-white border border-gray-200 hover:border-blue-400 hover:text-blue-600 px-2 py-1 rounded transition">질문형으로</button>
+                                                </div>
+                                            </div>
                                             
-                                            <div className="flex space-x-1">
-                                                <button 
-                                                onClick={() => copyToClipboard(scene.imagePrompt, `img-${scene.id}`)}
-                                                className="text-gray-400 hover:text-pink-500 transition p-1"
-                                                title="Copy Prompt Only"
-                                                >
-                                                {copiedIndex === `img-${scene.id}` ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                                                </button>
-                                                <button 
-                                                onClick={() => handleOpenGenerator(scene.imagePrompt)}
-                                                className="flex items-center space-x-1 text-xs bg-pink-100 hover:bg-pink-200 text-pink-700 px-2 py-1 rounded-md transition font-bold"
-                                                title="Open Nano Banana Pro & Auto-Enter Prompt"
-                                                >
-                                                <span>생성</span>
-                                                <ExternalLink className="w-3 h-3" />
-                                                </button>
-                                            </div>
-                                            </div>
-                                            <div className="bg-gray-900 p-4 rounded-xl text-xs text-gray-300 font-mono leading-relaxed h-28 overflow-y-auto custom-scrollbar shadow-inner">
-                                            {scene.imagePrompt}
-                                            </div>
-                                        </div>
-
-                                        <div className="relative group">
-                                            <div className="flex justify-between items-center mb-2">
-                                            <span className="text-xs text-blue-600 font-bold uppercase flex items-center bg-blue-50 px-2 py-0.5 rounded">
-                                                <Video className="w-3 h-3 mr-1.5" /> Video Gen Prompt
-                                            </span>
-                                            <button 
-                                                onClick={() => copyToClipboard(scene.videoPrompt, `vid-${scene.id}`)}
-                                                className="text-gray-400 hover:text-blue-500 transition"
-                                                title="Copy Prompt"
-                                            >
-                                                {copiedIndex === `vid-${scene.id}` ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-                                            </button>
-                                            </div>
-                                            <div className="bg-gray-900 p-4 rounded-xl text-xs text-gray-300 font-mono leading-relaxed h-28 overflow-y-auto custom-scrollbar shadow-inner">
-                                            {scene.videoPrompt}
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                <div className="space-y-5">
+                                                    <div className={`transition-all duration-300 ${rewritingId === scene.id ? 'opacity-50 animate-pulse' : ''}`}>
+                                                        <span className="text-xs text-gray-400 font-bold uppercase tracking-wide">Script (Audio)</span>
+                                                        <p className="text-gray-900 font-semibold bg-white p-4 rounded-xl border border-gray-200 shadow-sm mt-2 leading-relaxed text-lg relative">
+                                                            {scene.script}
+                                                            {rewritingId === scene.id && <span className="absolute top-2 right-2 text-xs text-purple-600 font-bold animate-pulse">수정 중...</span>}
+                                                        </p>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-xs text-gray-400 font-bold uppercase tracking-wide">Visual Content</span>
+                                                        <p className="text-sm text-gray-600 mt-2 leading-relaxed">{scene.visualDesc}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-4">
+                                                    <div className="relative group">
+                                                        <div className="flex justify-between items-center mb-2">
+                                                            <span className="text-xs text-pink-600 font-bold uppercase flex items-center bg-pink-50 px-2 py-0.5 rounded"><ImageIcon className="w-3 h-3 mr-1.5" /> Image Prompt</span>
+                                                            <div className="flex space-x-1">
+                                                                <button onClick={() => copyToClipboard(scene.imagePrompt, `img-${scene.id}`)} className="text-gray-400 hover:text-pink-500 transition p-1">{copiedIndex === `img-${scene.id}` ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}</button>
+                                                                <button onClick={() => handleOpenGenerator(scene.imagePrompt)} className="flex items-center space-x-1 text-xs bg-pink-100 hover:bg-pink-200 text-pink-700 px-2 py-1 rounded-md transition font-bold"><span>생성</span><ExternalLink className="w-3 h-3" /></button>
+                                                            </div>
+                                                        </div>
+                                                        <div className="bg-gray-900 p-4 rounded-xl text-xs text-gray-300 font-mono leading-relaxed h-28 overflow-y-auto custom-scrollbar shadow-inner">{scene.imagePrompt}</div>
+                                                    </div>
+                                                    <div className="relative group">
+                                                        <div className="flex justify-between items-center mb-2">
+                                                            <span className="text-xs text-blue-600 font-bold uppercase flex items-center bg-blue-50 px-2 py-0.5 rounded"><Video className="w-3 h-3 mr-1.5" /> Video Gen Prompt</span>
+                                                            <button onClick={() => copyToClipboard(scene.videoPrompt, `vid-${scene.id}`)} className="text-gray-400 hover:text-blue-500 transition">{copiedIndex === `vid-${scene.id}` ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}</button>
+                                                        </div>
+                                                        <div className="bg-gray-900 p-4 rounded-xl text-xs text-gray-300 font-mono leading-relaxed h-28 overflow-y-auto custom-scrollbar shadow-inner">{scene.videoPrompt}</div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
-                                        </div>
+                                    ))}
                                     </div>
+                                </div>
+                                <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
+                                    <div className="flex justify-between items-center mb-5 pb-3 border-b border-gray-100">
+                                        <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800"><div className="p-1.5 bg-orange-100 rounded-lg text-orange-600"><FileText className="w-5 h-5" /></div><span>자동 생성 블로그 초안</span></h3>
+                                        <button onClick={() => copyToClipboard(`${result.blogPost.title}\n\n${result.blogPost.content}`, 'blog')} className="flex items-center space-x-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg transition font-medium">{copiedIndex === 'blog' ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}<span>전체 복사</span></button>
                                     </div>
-                                ))}
-                                </div>
-                            </div>
-
-                            <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-lg">
-                                <div className="flex justify-between items-center mb-5 pb-3 border-b border-gray-100">
-                                <h3 className="flex items-center space-x-2 text-lg font-bold text-gray-800">
-                                    <div className="p-1.5 bg-orange-100 rounded-lg text-orange-600">
-                                    <FileText className="w-5 h-5" />
+                                    <div className="bg-gray-50 p-6 rounded-xl text-gray-800 border border-gray-100">
+                                        <h1 className="text-xl font-bold mb-4 text-gray-900">{result.blogPost.title}</h1>
+                                        <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">{result.blogPost.content}</p>
                                     </div>
-                                    <span>자동 생성 블로그 초안</span>
-                                </h3>
-                                <button 
-                                    onClick={() => copyToClipboard(`${result.blogPost.title}\n\n${result.blogPost.content}`, 'blog')}
-                                    className="flex items-center space-x-1.5 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg transition font-medium"
-                                >
-                                    {copiedIndex === 'blog' ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
-                                    <span>전체 복사</span>
-                                </button>
                                 </div>
-                                <div className="bg-gray-50 p-6 rounded-xl text-gray-800 border border-gray-100">
-                                <h1 className="text-xl font-bold mb-4 text-gray-900">{result.blogPost.title}</h1>
-                                <p className="whitespace-pre-line text-sm leading-relaxed text-gray-700">
-                                    {result.blogPost.content}
-                                </p>
-                                </div>
-                            </div>
                             </div>
                         </div>
                         )}
